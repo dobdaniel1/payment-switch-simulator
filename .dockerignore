@@ -1,0 +1,6 @@
+.venv
+tests
+*.db
+.git
+.pytest_cache
+.ruff_cache

@@ -1,0 +1,36 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check . && ruff format --check .
+      - run: pytest
+
+  postgres-smoke:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait
+      - name: Approve, reverse and settle against Postgres
+        run: |
+          set -e
+          body='{"pan":"4111111111111111","expiry":"2812","amount":10000,"stan":"000001","terminal_id":"TERM0001","merchant_id":"MERCHANT0000001"}'
+          id=$(curl -sf -X POST localhost:8000/v1/transactions -H 'Content-Type: application/json' -d "$body" | jq -r .id)
+          test "$(curl -sf -X POST localhost:8000/v1/transactions/$id/reversal | jq -r .status)" = REVERSED
+          body=${body/000001/000002}
+          curl -sf -X POST localhost:8000/v1/transactions -H 'Content-Type: application/json' -d "$body" >/dev/null
+          test "$(curl -sf -X POST localhost:8000/v1/settlement/batches -H 'Content-Type: application/json' -d '{}' | jq .transaction_count)" = 1
+      - if: failure()
+        run: docker compose logs

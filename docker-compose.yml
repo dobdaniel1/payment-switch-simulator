@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: switch
+      POSTGRES_PASSWORD: switch
+      POSTGRES_DB: switch
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U switch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://switch:switch@db:5432/switch
+      PAN_HASH_KEY: change-me-outside-local-dev
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
