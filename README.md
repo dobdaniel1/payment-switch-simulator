@@ -88,7 +88,8 @@ flowchart LR
 ## Design decisions
 
 - **No clear PANs stored.** The switch keeps a masked PAN for display and a keyed HMAC for matching.
-- **Idempotency by terminal, STAN and business date**, backed by a unique constraint so concurrent retries cannot double charge.
+- **Idempotency by terminal, STAN and business date**, backed by a unique constraint so concurrent retries cannot double charge. Only that constraint is treated as a duplicate; any other database conflict surfaces as an error.
+- **RRNs from a database sequence**: hour stamp (YDDDHH) plus the last six digits of a PostgreSQL sequence, unique up to a million transactions an hour without locking. An earlier random suffix collided after a few thousand transactions an hour, which [payment-switch-perf](https://github.com/dobdaniel1/payment-switch-perf) caught under load.
 - **Reverse before failover.** A timed out host may still have approved, so the switch reverses there before trying the fallback.
 - **Store and forward reversals** when the original host is unreachable.
 - **Settled transactions cannot be reversed**; a refund is the correct path after settlement.
@@ -97,7 +98,7 @@ flowchart LR
 
 ## Tests
 
-55 tests at 99% coverage: routing, every decline path, failover, timeouts, duplicates, reversals, store and forward, settlement totals, settlement files and reconciliation exceptions. CI also starts the Docker stack and runs a smoke test against PostgreSQL.
+61 tests at 99% coverage: routing, every decline path, failover, timeouts, duplicates, RRN uniqueness, reversals, store and forward, settlement totals, settlement files and reconciliation exceptions. CI also starts the Docker stack and runs a smoke test against PostgreSQL. Load, spike, soak and failover tests live in [payment-switch-perf](https://github.com/dobdaniel1/payment-switch-perf).
 
 All card numbers are public test numbers.
 

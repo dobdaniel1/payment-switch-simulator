@@ -1,8 +1,8 @@
-import secrets
 import uuid
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects import sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -10,14 +10,36 @@ from .. import hosts
 from ..cards import hash_pan, luhn_valid, mask_pan
 from ..config import settings
 from ..errors import Conflict, NotFound
-from ..models import APPROVED, DECLINED, REVERSAL_PENDING, REVERSED, Host, Transaction
+from ..models import (
+    APPROVED,
+    DECLINED,
+    REVERSAL_PENDING,
+    REVERSED,
+    RRN_SEQUENCE,
+    Host,
+    RrnCounter,
+    Transaction,
+)
 from ..schemas import AuthorizationRequest
 from .routing import resolve
 
 
-def _new_rrn(now: datetime) -> str:
-    # YDDDHH followed by 6 random digits
-    return f"{now:%y}"[-1] + f"{now:%j%H}" + f"{secrets.randbelow(10**6):06d}"
+def _next_sequence(session: Session) -> int:
+    if session.get_bind().dialect.name == "postgresql":  # pragma: no cover (Docker and load tests)
+        # No row lock, so concurrent authorizations never wait on each other.
+        return session.execute(RRN_SEQUENCE.next_value()).scalar_one()
+    return session.execute(
+        sqlite.insert(RrnCounter)
+        .values(name="rrn", value=1)
+        .on_conflict_do_update(index_elements=["name"], set_={"value": RrnCounter.value + 1})
+        .returning(RrnCounter.value)
+    ).scalar_one()
+
+
+def _next_rrn(session: Session, now: datetime) -> str:
+    """YDDDHH plus the last 6 digits of a sequence, unique while an hour has under a million
+    transactions. Random digits collided after a few thousand transactions an hour."""
+    return f"{now:%y}"[-1] + f"{now:%j%H}" + f"{_next_sequence(session) % 1_000_000:06d}"
 
 
 def _find_duplicate(session: Session, req: AuthorizationRequest, now: datetime):
@@ -77,7 +99,7 @@ def authorize(
         business_date=now.date(),
         type=req.type,
         stan=req.stan,
-        rrn=_new_rrn(now),
+        rrn=_next_rrn(session, now),
         terminal_id=req.terminal_id,
         merchant_id=req.merchant_id,
         pan_masked=mask_pan(req.pan),
@@ -94,9 +116,11 @@ def authorize(
     try:
         session.commit()
     except IntegrityError:
-        # Lost a race with an identical request.
         session.rollback()
-        return _find_duplicate(session, req, now), True
+        # Lost a race with an identical request. Any other conflict is a real error.
+        if existing := _find_duplicate(session, req, now):
+            return existing, True
+        raise
     return txn, False
 
 

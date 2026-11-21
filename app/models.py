@@ -1,6 +1,15 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, BigInteger, Date, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Date,
+    DateTime,
+    ForeignKey,
+    Sequence,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -35,6 +44,19 @@ class SettlementBatch(Base):
     closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     transaction_count: Mapped[int]
     totals: Mapped[dict] = mapped_column(JSON)
+
+
+# Created on PostgreSQL by create_all. SQLite has no sequences and uses RrnCounter instead.
+RRN_SEQUENCE = Sequence("rrn_seq", metadata=Base.metadata)
+
+
+class RrnCounter(Base):
+    """Sequence stand-in for SQLite, which serializes writes anyway."""
+
+    __tablename__ = "rrn_counter"
+
+    name: Mapped[str] = mapped_column(String(16), primary_key=True)
+    value: Mapped[int] = mapped_column(BigInteger)
 
 
 class Transaction(Base):
